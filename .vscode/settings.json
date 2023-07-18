@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "mman.h": "c",
+        "time.h": "c",
+        "doca_argp.h": "c",
+        "zlib.h": "c",
+        "zstd.h": "c",
+        "file_compression_core.h": "c"
+    }
+}

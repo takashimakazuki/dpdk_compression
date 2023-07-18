@@ -1,0 +1,1 @@
+sudo bfb-install --rshim rshim0 --bfb DOCA_2.0.2_BSP_4.0.3_Ubuntu_22.04-8.23-04.prod.bfb --config bf.cfg 

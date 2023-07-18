@@ -1,0 +1,9 @@
+{
+  "doca_general_flags":{
+    "log-level": 60
+  },
+  "doca_program_flags":{
+    "pci-addr": "03:00.0",
+    "rep-pci": "0c:00.0"
+  }
+}

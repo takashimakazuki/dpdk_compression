@@ -1,0 +1,11 @@
+{
+  "doca_general_flags":{
+    "log-level": 60
+  },
+  "doca_program_flags":{
+    "pci-addr": "0c:00.0",
+    "file": "../dataset/QVAPORf01.bin",
+    "out": "../dataset/QVAPORf01.bin.deflate"
+  }
+}
+  
