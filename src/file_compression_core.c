@@ -39,6 +39,12 @@
 #define DEFAULT_TIMEOUT 10			/* default timeout for receiving messages */
 #define SERVER_NAME "file_compression_server"	/* CC server name */
 
+#define CHECK_ERR(...) \
+if (result != DOCA_SUCCESS) {\
+	DOCA_DLOG_ERR(__VA_ARGS__);\
+	return result;\
+}\
+
 DOCA_LOG_REGISTER(FILE_COMPRESSION::Core);
 
 /*
@@ -57,32 +63,32 @@ set_endpoint_properties(enum file_compression_mode mode, struct doca_comm_channe
 
 	result = doca_comm_channel_ep_set_device(ep, dev);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to set DOCA device property");
+		DOCA_DLOG_ERR("Failed to set DOCA device property");
 		return result;
 	}
 
 	result = doca_comm_channel_ep_set_max_msg_size(ep, MAX_MSG_SIZE);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to set max_msg_size property");
+		DOCA_DLOG_ERR("Failed to set max_msg_size property");
 		return result;
 	}
 
 	result = doca_comm_channel_ep_set_send_queue_size(ep, MAX_MSG);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to set snd_queue_size property");
+		DOCA_DLOG_ERR("Failed to set snd_queue_size property");
 		return result;
 	}
 
 	result = doca_comm_channel_ep_set_recv_queue_size(ep, MAX_MSG);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to set rcv_queue_size property");
+		DOCA_DLOG_ERR("Failed to set rcv_queue_size property");
 		return result;
 	}
 
 	if (mode == SERVER) {
 		result = doca_comm_channel_ep_set_device_rep(ep, dev_rep);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to set DOCA device representor property");
+			DOCA_DLOG_ERR("Failed to set DOCA device representor property");
 			return result;
 		}
 	}
@@ -123,7 +129,7 @@ process_job(struct program_core_objects *state, const struct doca_job *job)
 	/* Enqueue job */
 	result = doca_workq_submit(state->workq, job);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to submit doca job: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to submit doca job: %s", doca_get_error_string(result));
 		return result;
 	}
 
@@ -137,9 +143,9 @@ process_job(struct program_core_objects *state, const struct doca_job *job)
 	}
 
 	if (result != DOCA_SUCCESS)
-		DOCA_LOG_ERR("Failed to retrieve job: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to retrieve job: %s", doca_get_error_string(result));
 	else if (event.result.u64 != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Job finished unsuccessfully");
+		DOCA_DLOG_ERR("Job finished unsuccessfully");
 		result = event.result.u64;
 	} else
 		result = DOCA_SUCCESS;
@@ -163,20 +169,20 @@ populate_dst_buf(struct program_core_objects *state, uint8_t **dst_buffer, size_
 
 	dst_buffer = calloc(1, dst_buf_size);
 	if (dst_buffer == NULL) {
-		DOCA_LOG_ERR("Failed to allocate memory");
+		DOCA_DLOG_ERR("Failed to allocate memory");
 		return DOCA_ERROR_NO_MEMORY;
 	}
 
 	result = doca_mmap_set_memrange(state->dst_mmap, dst_buffer, dst_buf_size);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Unable to set memory range destination memory map: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Unable to set memory range destination memory map: %s", doca_get_error_string(result));
 		free(dst_buffer);
 		return result;
 	}
 
 	result = doca_mmap_start(state->dst_mmap);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Unable to start destination memory map: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Unable to start destination memory map: %s", doca_get_error_string(result));
 		free(dst_buffer);
 		return result;
 	}
@@ -184,7 +190,7 @@ populate_dst_buf(struct program_core_objects *state, uint8_t **dst_buffer, size_
 	result = doca_buf_inventory_buf_by_addr(state->buf_inv, state->dst_mmap, dst_buffer, dst_buf_size,
 						dst_doca_buf);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Unable to acquire DOCA buffer representing destination buffer: %s",
+		DOCA_DLOG_ERR("Unable to acquire DOCA buffer representing destination buffer: %s",
 			     doca_get_error_string(result));
 		return result;
 	}
@@ -216,26 +222,26 @@ compress_file_hw(struct program_core_objects *state, char *file_data, size_t fil
 
 	result = doca_mmap_set_memrange(state->src_mmap, file_data, file_size);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Unable to set memory range of source memory map: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Unable to set memory range of source memory map: %s", doca_get_error_string(result));
 		munmap(file_data, file_size);
 		return result;
 	}
 	result = doca_mmap_set_free_cb(state->src_mmap, &unmap_cb, NULL);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Unable to set free callback of source memory map: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Unable to set free callback of source memory map: %s", doca_get_error_string(result));
 		munmap(file_data, file_size);
 		return result;
 	}
 	result = doca_mmap_start(state->src_mmap);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Unable to start source memory map: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Unable to start source memory map: %s", doca_get_error_string(result));
 		munmap(file_data, file_size);
 		return result;
 	}
 
 	result = doca_buf_inventory_buf_by_addr(state->buf_inv, state->src_mmap, file_data, file_size, &src_doca_buf);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Unable to acquire DOCA buffer representing source buffer: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Unable to acquire DOCA buffer representing source buffer: %s", doca_get_error_string(result));
 		return result;
 	}
 
@@ -305,20 +311,20 @@ compress_file_sw(char *file_data, size_t file_size, size_t dst_buf_size, Byte **
 	c_stream.avail_out = dst_buf_size;
 	err = deflate(&c_stream, Z_NO_FLUSH);
 	if (err < 0) {
-		DOCA_LOG_ERR("Failed to compress file");
+		DOCA_DLOG_ERR("Failed to compress file");
 		return DOCA_ERROR_BAD_STATE;
 	}
 
 	/* Finish the stream */
 	err = deflate(&c_stream, Z_FINISH);
 	if (err < 0 || err != Z_STREAM_END) {
-		DOCA_LOG_ERR("Failed to compress file");
+		DOCA_DLOG_ERR("Failed to compress file");
 		return DOCA_ERROR_BAD_STATE;
 	}
 
 	err = deflateEnd(&c_stream);
 	if (err < 0) {
-		DOCA_LOG_ERR("Failed to compress file");
+		DOCA_DLOG_ERR("Failed to compress file");
 		return DOCA_ERROR_BAD_STATE;
 	}
 	*compressed_file_len = c_stream.total_out;
@@ -392,7 +398,7 @@ compress_file(struct program_core_objects *state, char *file_data, size_t file_s
 
 	*compressed_file = calloc(1, dst_buf_size);
 	if (*compressed_file == NULL) {
-		DOCA_LOG_ERR("Failed to allocate memory");
+		DOCA_DLOG_ERR("Failed to allocate memory");
 		return DOCA_ERROR_NO_MEMORY;
 	}
 
@@ -436,7 +442,7 @@ send_file(struct doca_comm_channel_ep_t *ep, struct doca_comm_channel_addr_t **p
 						     *peer_addr)) == DOCA_ERROR_AGAIN)
 		nanosleep(&ts, &ts);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Message was not sent: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Message was not sent: %s", doca_get_error_string(result));
 		return result;
 	}
 
@@ -447,7 +453,7 @@ send_file(struct doca_comm_channel_ep_t *ep, struct doca_comm_channel_addr_t **p
 		while ((result = doca_comm_channel_ep_sendto(ep, file_data, msg_len, DOCA_CC_MSG_FLAG_NONE, *peer_addr)) == DOCA_ERROR_AGAIN)
 			nanosleep(&ts, &ts);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Message was not sent: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Message was not sent: %s", doca_get_error_string(result));
 			return result;
 		}
 		file_data += msg_len;
@@ -492,6 +498,13 @@ compression_experiment_on_host(struct program_core_objects *state, char* receive
 }
 
 
+/*
+ * This function measures the compression time from data retrieval from DPU memory to completion of compression.
+ * - HW deflate
+ * - Zlib
+ * - Zstd
+ * 
+*/
 static doca_error_t
 compression_experiment_on_bluefield(struct program_core_objects *state, char* received_file, size_t received_file_size, uint8_t **compressed_file, size_t *compressed_file_len)
 {
@@ -527,7 +540,7 @@ compression_experiment_on_bluefield(struct program_core_objects *state, char* re
 	sec = (double)(now.tv_sec - start_time.tv_sec);
 	micro = (double)(now.tv_usec - start_time.tv_usec);
 	passed = sec + micro / 1000.0 / 1000.0;
-	DOCA_DLOG_DBG("[SERVER] Zstd Compression time %lf, len=%ld", passed, compressed_f_len);
+	DOCA_DLOG_INFO("[SERVER] Zstd Compression time %lf, len=%ld", passed, compressed_f_len);
 
 	*compressed_file = compressed_f;
 	*compressed_file_len = compressed_f_len;
@@ -555,25 +568,25 @@ file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 
 	fd = open(app_cfg->file_path, O_RDWR);
 	if (fd < 0) {
-		DOCA_LOG_ERR("Failed to open %s", app_cfg->file_path);
+		DOCA_DLOG_ERR("Failed to open %s", app_cfg->file_path);
 		return DOCA_ERROR_IO_FAILED;
 	}
 
 	if (fstat(fd, &statbuf) < 0) {
-		DOCA_LOG_ERR("Failed to get file information");
+		DOCA_DLOG_ERR("Failed to get file information");
 		close(fd);
 		return DOCA_ERROR_IO_FAILED;
 	}
 
 	if (statbuf.st_size == 0 || statbuf.st_size > MAX_FILE_SIZE) {
-		DOCA_LOG_ERR("Invalid file size. Should be greater then zero and smaller then two Gbytes");
+		DOCA_DLOG_ERR("Invalid file size. Should be greater then zero and smaller then two Gbytes");
 		close(fd);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 
 	file_data = mmap(NULL, statbuf.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 	if (file_data == MAP_FAILED) {
-		DOCA_LOG_ERR("Unable to map file content: %s", strerror(errno));
+		DOCA_DLOG_ERR("Unable to map file content: %s", strerror(errno));
 		close(fd);
 		return DOCA_ERROR_NO_MEMORY;
 	}
@@ -596,11 +609,11 @@ file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 		msg_len = MAX_MSG_SIZE;
 	}
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Finish message was not received: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Finish message was not received: %s", doca_get_error_string(result));
 		return result;
 	}
 	msg[MAX_MSG_SIZE - 1] = '\0';
-	DOCA_LOG_INFO("%s", msg);
+	DOCA_DLOG_INFO("%s", msg);
 
 	/* Receive number of total msgs from the server(DPU) */
 	msg_len = MAX_MSG_SIZE;
@@ -608,18 +621,18 @@ file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 		msg_len = MAX_MSG_SIZE;
 	}
 	if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Message was not received: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Message was not received: %s", doca_get_error_string(result));
 			goto finish_msg;
 	}
 	if (msg_len != sizeof(uint32_t)) {
-			DOCA_LOG_ERR("Received wrong message size, required %ld, got %ld", sizeof(uint32_t), msg_len);
+			DOCA_DLOG_ERR("Received wrong message size, required %ld, got %ld", sizeof(uint32_t), msg_len);
 			goto finish_msg;
 	}
 	total_msgs = ntohl(*(uint32_t *)received_msg);
 
 	received_file = calloc(1, MAX_FILE_SIZE);
 	if (received_file == NULL) {
-		DOCA_LOG_ERR("Failed to allocate memory");
+		DOCA_DLOG_ERR("Failed to allocate memory");
 		result = DOCA_ERROR_NO_MEMORY;
 		goto finish_msg;
 	}
@@ -636,13 +649,13 @@ file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 			nanosleep(&ts, &ts);
 		}
 		if (result != DOCA_SUCCESS){
-			DOCA_LOG_ERR("Message was not received: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Message was not received: %s", doca_get_error_string(result));
 			goto finish_msg;
 		}
 
 		// DOCA_DLOG_DBG("Received message #%d / %d", i, total_msgs);
 		if (received_ptr - received_file + msg_len > MAX_FILE_SIZE) {
-			DOCA_LOG_ERR("Received file exceeded maximum file size");
+			DOCA_DLOG_ERR("Received file exceeded maximum file size");
 			goto finish_msg;
 		}
 		memcpy(received_ptr, received_msg, msg_len);
@@ -655,7 +668,7 @@ file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 		nanosleep(&ts, &ts);
 	if (result != DOCA_SUCCESS) 
 	{
-		DOCA_LOG_ERR("Failed to send ACK: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to send ACK: %s", doca_get_error_string(result));
 		goto finish_msg;
 	}
 
@@ -664,20 +677,20 @@ file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 	DOCA_DLOG_DBG("[CLIENT] file to write-> %s", app_cfg->out_file_path);
 	FILE* out_file = fopen(app_cfg->out_file_path, "w");
 	if (out_file == NULL) {
-		DOCA_LOG_ERR("Failed to open %s", app_cfg->out_file_path);
+		DOCA_DLOG_ERR("Failed to open %s", app_cfg->out_file_path);
 		return DOCA_ERROR_IO_FAILED;
 	}
 
 	int num;
 	num = fwrite(received_file, 1, (size_t)(received_ptr - received_file), out_file);
     if(num < 0) {
-		DOCA_LOG_ERR("Failed to write to %s", app_cfg->out_file_path);
+		DOCA_DLOG_ERR("Failed to write to %s", app_cfg->out_file_path);
 		close(fd);
 		return DOCA_ERROR_IO_FAILED;
     }
 
 	if (fclose(out_file) == EOF) {
-		DOCA_LOG_ERR("Failed to close file %s", app_cfg->out_file_path);
+		DOCA_DLOG_ERR("Failed to close file %s", app_cfg->out_file_path);
 		return DOCA_ERROR_IO_FAILED;
 	}
 
@@ -685,6 +698,9 @@ file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 	uint8_t *compressed_file;
 	size_t compressed_file_len;
 	compression_experiment_on_host(state, file_data, statbuf.st_size, &compressed_file, &compressed_file_len);
+
+	/* Start compression experiment using host machine and bf2 */
+
 
 finish_msg:
 	DOCA_DLOG_DBG("[CLIENT] Finish Client");
@@ -721,23 +737,23 @@ file_compression_server(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 		nanosleep(&ts, &ts);
 		counter++;
 		if (counter == num_of_iterations) {
-			DOCA_LOG_ERR("Message was not received at the given timeout");
+			DOCA_DLOG_ERR("Message was not received at the given timeout");
 			goto finish_msg;
 		}
 	}
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Message was not received: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Message was not received: %s", doca_get_error_string(result));
 		goto finish_msg;
 	}
 	if (msg_len != sizeof(uint32_t)) {
-		DOCA_LOG_ERR("Received wrong message size, required %ld, got %ld", sizeof(uint32_t), msg_len);
+		DOCA_DLOG_ERR("Received wrong message size, required %ld, got %ld", sizeof(uint32_t), msg_len);
 		goto finish_msg;
 	}
 	total_msgs = ntohl(*(uint32_t *)received_msg);
 
 	received_file = calloc(1, MAX_FILE_SIZE);
 	if (received_file == NULL) {
-		DOCA_LOG_ERR("Failed to allocate memory");
+		DOCA_DLOG_ERR("Failed to allocate memory");
 		result = DOCA_ERROR_NO_MEMORY;
 		goto finish_msg;
 	}
@@ -751,23 +767,23 @@ file_compression_server(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 		counter = 0;
 		while ((result = doca_comm_channel_ep_recvfrom(ep, received_msg, &msg_len, DOCA_CC_MSG_FLAG_NONE,
 							       peer_addr)) == DOCA_ERROR_AGAIN) {
-			DOCA_DLOG_DBG("[SERVER] recv message %ld bytes", msg_len);
+			// DOCA_DLOG_DBG("[SERVER] recv message %ld bytes", msg_len);
 			msg_len = MAX_MSG_SIZE;
 			nanosleep(&ts, &ts);
 			counter++;
 			if (counter == num_of_iterations) {
-				DOCA_LOG_ERR("Message was not received at the given timeout");
+				DOCA_DLOG_ERR("Message was not received at the given timeout");
 				goto finish_msg;
 			}
 		}
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Message was not received: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Message was not received: %s", doca_get_error_string(result));
 			goto finish_msg;
 		}
 
 		// DOCA_DLOG_DBG("Received message #%d", i+1);
 		if (received_ptr - received_file + msg_len > MAX_FILE_SIZE) {
-			DOCA_LOG_ERR("Received file exceeded maximum file size");
+			DOCA_DLOG_ERR("Received file exceeded maximum file size");
 			goto finish_msg;
 		}
 		memcpy(received_ptr, received_msg, msg_len);
@@ -779,7 +795,7 @@ file_compression_server(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 		nanosleep(&ts, &ts);
 	if (result != DOCA_SUCCESS) 
 	{
-		DOCA_LOG_ERR("Failed to receive file data from client: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to receive file data from client: %s", doca_get_error_string(result));
 		goto finish_msg;
 	}
 
@@ -790,7 +806,7 @@ file_compression_server(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 	
 
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to compress data: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to compress data: %s", doca_get_error_string(result));
 		goto finish_msg;
 	}
 	DOCA_DLOG_DBG("[SERVER] Compression done");
@@ -801,7 +817,7 @@ file_compression_server(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 	result = send_file(ep, peer_addr, (char *)compressed_file, compressed_file_len);
 	if (result != DOCA_SUCCESS) 
 	{
-		DOCA_LOG_ERR("Failed to receive file data from client: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to receive file data from client: %s", doca_get_error_string(result));
 		goto finish_msg;
 	}
 
@@ -813,7 +829,7 @@ file_compression_server(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 		msg_len = MAX_MSG_SIZE;
 	}
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Finish message was not received: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Finish message was not received: %s", doca_get_error_string(result));
 		return result;
 	}
 	msg[MAX_MSG_SIZE - 1] = '\0';
@@ -821,7 +837,7 @@ file_compression_server(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 	
 
 finish_msg:
-	DOCA_DLOG_DBG("Finish Server...");
+	DOCA_DLOG_INFO("Finish Server...");
 	return result;
 }
 
@@ -873,7 +889,7 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 	/* Create Comm Channel endpoint */
 	result = doca_comm_channel_ep_create(ep); // 参照：https://docs.nvidia.com/doca/sdk/comm-channel-programming-guide/graphics/establishing-connection.png
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to create Comm Channel endpoint: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to create Comm Channel endpoint: %s", doca_get_error_string(result));
 		return result;
 	}
 
@@ -881,7 +897,7 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 	result = doca_compress_create(compress_ctx);
 	if (result != DOCA_SUCCESS) {
 		doca_comm_channel_ep_destroy(*ep);
-		DOCA_LOG_ERR("Failed to init compress library: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to init compress library: %s", doca_get_error_string(result));
 		return result;
 	}
 
@@ -889,14 +905,14 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 
 	result = doca_pci_bdf_from_string(app_cfg->cc_dev_pci_addr, &pci_bdf);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Invalid PCI address: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Invalid PCI address: %s", doca_get_error_string(result));
 		goto compress_destroy;
 	}
 
 	/* open DOCA device for CC */
 	result = open_doca_device_with_pci(&pci_bdf, NULL, &cc_doca_dev);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to open DOCA device: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to open DOCA device: %s", doca_get_error_string(result));
 		goto compress_destroy;
 	}
 
@@ -904,13 +920,13 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 	if (app_cfg->mode == SERVER) {
 		result = doca_pci_bdf_from_string(app_cfg->cc_dev_rep_pci_addr, &pci_bdf);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Invalid PCI address: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Invalid PCI address: %s", doca_get_error_string(result));
 			goto dev_close;
 		}
 
 		result = open_doca_device_rep_with_pci(cc_doca_dev, DOCA_DEV_REP_FILTER_NET, &pci_bdf, &cc_doca_dev_rep);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to open representor device: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Failed to open representor device: %s", doca_get_error_string(result));
 			goto dev_close;
 		}
 	}
@@ -922,7 +938,7 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 		result = open_doca_device_with_capabilities(&compress_jobs_decompress_is_supported, &state->dev);
 
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to open DOCA device for DOCA Compress: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Failed to open DOCA device for DOCA Compress: %s", doca_get_error_string(result));
 			goto rep_dev_close;
 		}
 	} else {
@@ -937,14 +953,14 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 	/* Set ep attributes */
 	result = set_endpoint_properties(app_cfg->mode, *ep, cc_doca_dev, cc_doca_dev_rep);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to init DOCA core objects: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to init DOCA core objects: %s", doca_get_error_string(result));
 		goto rep_dev_close;
 	}
 
 	if (app_cfg->compress_method == COMPRESS_DEFLATE_HW) {
 		result = init_core_objects(state, workq_depth, max_bufs);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to init DOCA core objects: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Failed to init DOCA core objects: %s", doca_get_error_string(result));
 			goto destroy_core_objs;
 		}
 	}
@@ -953,7 +969,7 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 		// ==== client code =====
 		result = doca_comm_channel_ep_connect(*ep, SERVER_NAME, peer_addr);
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Couldn't establish a connection with the server node: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Couldn't establish a connection with the server node: %s", doca_get_error_string(result));
 			goto destroy_core_objs;
 		}
 
@@ -961,7 +977,7 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 			nanosleep(&ts, &ts);
 
 		if (result != DOCA_SUCCESS) {
-			DOCA_LOG_ERR("Failed to validate the connection with the DPU: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Failed to validate the connection with the DPU: %s", doca_get_error_string(result));
 			goto destroy_core_objs;
 		}
 
@@ -971,7 +987,7 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 		result = doca_comm_channel_ep_listen(*ep, SERVER_NAME);
 		if (result != DOCA_SUCCESS) {
 			doca_dev_rep_close(cc_doca_dev_rep);
-			DOCA_LOG_ERR("Comm channel server couldn't start listening: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Comm channel server couldn't start listening: %s", doca_get_error_string(result));
 			goto destroy_core_objs;
 		}
 
@@ -1003,21 +1019,21 @@ file_compression_cleanup(struct program_core_objects *state, struct file_compres
 
 	result = doca_comm_channel_ep_disconnect(ep, *peer_addr);
 	if (result != DOCA_SUCCESS)
-		DOCA_LOG_ERR("Failed to disconnect channel: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to disconnect channel: %s", doca_get_error_string(result));
 
 	result = doca_comm_channel_ep_destroy(ep);
 	if (result != DOCA_SUCCESS)
-		DOCA_LOG_ERR("Failed to destroy channel: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to destroy channel: %s", doca_get_error_string(result));
 
 	if (app_cfg->compress_method == COMPRESS_DEFLATE_HW) {
 		result = destroy_core_objects(state);
 		if (result != DOCA_SUCCESS)
-			DOCA_LOG_ERR("Failed to destroy core objects: %s", doca_get_error_string(result));
+			DOCA_DLOG_ERR("Failed to destroy core objects: %s", doca_get_error_string(result));
 	}
 
 	result = doca_compress_destroy(compress_ctx);
 	if (result != DOCA_SUCCESS)
-		DOCA_LOG_ERR("Failed to destroy compress: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to destroy compress: %s", doca_get_error_string(result));
 }
 
 /*
@@ -1034,7 +1050,7 @@ file_callback(void *param, void *config)
 	char *file_path = (char *)param;
 
 	if (strnlen(file_path, MAX_FILE_NAME) == MAX_FILE_NAME) {
-		DOCA_LOG_ERR("File name is too long - MAX=%d", MAX_FILE_NAME - 1);
+		DOCA_DLOG_ERR("File name is too long - MAX=%d", MAX_FILE_NAME - 1);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 	strlcpy(app_cfg->file_path, file_path, MAX_FILE_NAME);
@@ -1055,7 +1071,7 @@ out_file_callback(void *param, void *config)
 	char *file_path = (char *)param;
 
 	if (strnlen(file_path, MAX_FILE_NAME) == MAX_FILE_NAME) {
-		DOCA_LOG_ERR("File name is too long - MAX=%d", MAX_FILE_NAME - 1);
+		DOCA_DLOG_ERR("File name is too long - MAX=%d", MAX_FILE_NAME - 1);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 	strlcpy(app_cfg->out_file_path, file_path, MAX_FILE_NAME);
@@ -1076,7 +1092,7 @@ dev_pci_addr_callback(void *param, void *config)
 	char *pci_addr = (char *)param;
 
 	if (strnlen(pci_addr, PCI_ADDR_LEN) == PCI_ADDR_LEN) {
-		DOCA_LOG_ERR("Entered device PCI address exceeding the maximum size of %d", PCI_ADDR_LEN - 1);
+		DOCA_DLOG_ERR("Entered device PCI address exceeding the maximum size of %d", PCI_ADDR_LEN - 1);
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 	strlcpy(app_cfg->cc_dev_pci_addr, pci_addr, PCI_ADDR_LEN);
@@ -1098,7 +1114,7 @@ rep_pci_addr_callback(void *param, void *config)
 
 	if (app_cfg->mode == SERVER) {
 		if (strnlen(rep_pci_addr, PCI_ADDR_LEN) == PCI_ADDR_LEN) {
-			DOCA_LOG_ERR("Entered device representor PCI address exceeding the maximum size of %d",
+			DOCA_DLOG_ERR("Entered device representor PCI address exceeding the maximum size of %d",
 				     PCI_ADDR_LEN - 1);
 			return DOCA_ERROR_INVALID_VALUE;
 		}
@@ -1123,7 +1139,7 @@ timeout_callback(void *param, void *config)
 	int *timeout = (int *)param;
 
 	if (*timeout <= 0) {
-		DOCA_LOG_ERR("Timeout parameter must be positive value");
+		DOCA_DLOG_ERR("Timeout parameter must be positive value");
 		return DOCA_ERROR_INVALID_VALUE;
 	}
 	app_cfg->timeout = *timeout;
@@ -1142,10 +1158,10 @@ args_validation_callback(void *cfg)
 	struct file_compression_config *app_cfg = (struct file_compression_config *)cfg;
 
 	if (app_cfg->mode == CLIENT && (access(app_cfg->file_path, F_OK) == -1)) {
-		DOCA_LOG_ERR("File was not found %s", app_cfg->file_path);
+		DOCA_DLOG_ERR("File was not found %s", app_cfg->file_path);
 		return DOCA_ERROR_NOT_FOUND;
 	} else if (app_cfg->mode == SERVER && strlen(app_cfg->cc_dev_rep_pci_addr) == 0) {
-		DOCA_LOG_ERR("Missing representor PCI address for server");
+		DOCA_DLOG_ERR("Missing representor PCI address for server");
 		return DOCA_ERROR_NOT_FOUND;
 	}
 	return DOCA_SUCCESS;
@@ -1161,7 +1177,7 @@ register_file_compression_params()
 	/* Create and register pci param */
 	result = doca_argp_param_create(&dev_pci_addr_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
 		return result;
 	}
 	doca_argp_param_set_short_name(dev_pci_addr_param, "p");
@@ -1172,14 +1188,14 @@ register_file_compression_params()
 	doca_argp_param_set_mandatory(dev_pci_addr_param);
 	result = doca_argp_register_param(dev_pci_addr_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
 		return result;
 	}
 
 	/* Create and register rep PCI address param */
 	result = doca_argp_param_create(&rep_pci_addr_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
 		return result;
 	}
 	doca_argp_param_set_short_name(rep_pci_addr_param, "r");
@@ -1189,14 +1205,14 @@ register_file_compression_params()
 	doca_argp_param_set_type(rep_pci_addr_param, DOCA_ARGP_TYPE_STRING);
 	result = doca_argp_register_param(rep_pci_addr_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
 		return result;
 	}
 
 	/* Create and register message to send param */
 	result = doca_argp_param_create(&file_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
 		return result;
 	}
 	doca_argp_param_set_short_name(file_param, "f");
@@ -1206,14 +1222,14 @@ register_file_compression_params()
 	doca_argp_param_set_type(file_param, DOCA_ARGP_TYPE_STRING);
 	result = doca_argp_register_param(file_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
 		return result;
 	}
 
 	/* Create and register output file param */
 	result = doca_argp_param_create(&out_file_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
 		return result;
 	}
 	doca_argp_param_set_short_name(out_file_param, "o");
@@ -1223,7 +1239,7 @@ register_file_compression_params()
 	doca_argp_param_set_type(out_file_param, DOCA_ARGP_TYPE_STRING);
 	result = doca_argp_register_param(out_file_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
 		return result;
 	}
 
@@ -1231,7 +1247,7 @@ register_file_compression_params()
 	/* Create and register timeout */
 	result = doca_argp_param_create(&timeout_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to create ARGP param: %s", doca_get_error_string(result));
 		return result;
 	}
 	doca_argp_param_set_short_name(timeout_param, "t");
@@ -1241,21 +1257,21 @@ register_file_compression_params()
 	doca_argp_param_set_type(timeout_param, DOCA_ARGP_TYPE_INT);
 	result = doca_argp_register_param(timeout_param);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to register program param: %s", doca_get_error_string(result));
 		return result;
 	}
 
 	/* Register version callback for DOCA SDK & RUNTIME */
 	result = doca_argp_register_version_callback(sdk_version_callback);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to register version callback: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to register version callback: %s", doca_get_error_string(result));
 		return result;
 	}
 
 	/* Register application callback */
 	result = doca_argp_register_validation_callback(args_validation_callback);
 	if (result != DOCA_SUCCESS) {
-		DOCA_LOG_ERR("Failed to register program validation callback: %s", doca_get_error_string(result));
+		DOCA_DLOG_ERR("Failed to register program validation callback: %s", doca_get_error_string(result));
 		return result;
 	}
 
