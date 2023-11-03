@@ -17,13 +17,15 @@
   - Zlib (HOST): Zlib compression on HOST machine core (1core)
   - Zlib (BF2): Zlib compression on BF2 core (1core)
 
-|-|QVAPORf01.bin (float)| COVID19 (text)
-|---|---|---|
-|HW deflate     |0.126||
-|Zstd (BF2)     |0.351||
-|Zstd (HOST)    |0.226||
-|Zlib (BF2)     |9.027||
-|Zlib (HOST)    |5.758||
+|-|QVAPORf01.bin (float)| COVID19 (text)||
+|---|---|---|---|
+|Zlib (BF)	|8.930s, 81.9MB, 85%	|3.125s, 8.3MB, 24%	||
+|Zstd (BF)	|0.355s, 82.5MB, 86%	|0.242s, 6.4MB, 18%	||
+|Zlib (HOST)	|5.576s, 81.9MB, 85%	|1.581s, 8.3MB, 24%	||
+|HW deflate (BF)|	0.128s, 82.2MB, 86%	|0.060s, 8.7MB, 25%	|DPUmem→HWacc→DPUmem|
+|Zstd(HOST)	|0.210s, 82.5MB, 86%	|0.110s, 6.4MB, 18%	|HOSTmem→CompressLib→HOSTmem|
+|HW deflate(BF) TAT|	0.330s, 82.2MB, 86%	|0.115s, 8.7MB, 25%	|HOSTmem→DPUmem→HWacc→DPUmem→HOSTmem|
+C|opy&Back TAT|	0.190s	|0.051s	|HOSTmem→DPUmem→HOSTmem|
 
 
 ```
