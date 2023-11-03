@@ -29,7 +29,7 @@
 #include <utils.h>
 #include <doca_utils.h>
 
-#include "file_compression_core.h"
+#include "file_compression_total_core.h"
 
 #define MAX_MSG 512				/* Maximum number of messages in CC queue */
 #define SLEEP_IN_NANOS (1 * 1000)		/* Sample the job every 10 microseconds */
@@ -309,42 +309,6 @@ compress_file_sw(char *file_data, size_t file_size, size_t dst_buf_size, Byte **
 }
 
 
-static doca_error_t
-compress_file_zstd(char *file_data, size_t file_size, size_t dst_buf_size, Byte **compressed_file, uLong *compressed_file_len)
-{
-	size_t cSize = ZSTD_compress(*compressed_file, dst_buf_size, file_data, file_size, 1);
-	*compressed_file_len = cSize;
-
-	return DOCA_SUCCESS;
-}
-
-
-/*
- * Calculate file checksum with zlib, where the lower 32 bits contain the CRC checksum result
- * and the upper 32 bits contain the Adler checksum result.
- *
- * @file_data [in]: file data to the source buffer
- * @file_size [in]: file size
- * @output_chksum [out]: the calculated checksum
- */
-static void
-calculate_checksum_sw(char *file_data, size_t file_size, uint64_t *output_chksum)
-{
-	uint32_t crc;
-	uint32_t adler;
-	uint64_t result_checksum;
-
-	crc = crc32(0L, Z_NULL, 0);
-	crc = crc32(crc, (const unsigned char *)file_data, file_size);
-	adler = adler32(0L, Z_NULL, 0);
-	adler = adler32(adler, (const unsigned char *)file_data, file_size);
-
-	result_checksum = adler;
-	result_checksum <<= 32;
-	result_checksum += crc;
-
-	*output_chksum = result_checksum;
-}
 
 /*
  * Compress / decompress the input file data
@@ -382,136 +346,174 @@ compress_file(struct program_core_objects *state, char *file_data, size_t file_s
 	if (compress_method == COMPRESS_DEFLATE_SW) {
 		// calculate_checksum_sw(file_data, file_size, output_chksum);
 		return compress_file_sw(file_data, file_size, dst_buf_size, compressed_file, compressed_file_len);
-	} else if (compress_method == COMPRESS_DEFLATE_HW) {
+	} else { // if (compress_method == COMPRESS_DEFLATE_HW) {
 		return compress_file_hw(state, file_data, file_size, job_type, dst_buf_size, compressed_file, compressed_file_len, output_chksum);
-	} else {
-		return compress_file_zstd(file_data, file_size, dst_buf_size, compressed_file, compressed_file_len);
 	}
 }
 
 /*
- * Send the input file with comm channel to the server in segments of MAX_MSG_SIZE
+ * Send the input data with comm channel to a remote peer
  *
  * @ep [in]: handle for comm channel local endpoint
  * @peer_addr [in]: destination address handle of the send operation
- * @buf [in]: file data to the source buffer
- * @buf_size [in]: file size
+ * @buf [in]: data to the source buffer
+ * @buf_size [in]: data size
  * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
  */
 static doca_error_t
-send_file(struct doca_comm_channel_ep_t *ep, struct doca_comm_channel_addr_t **peer_addr,
+send_data(struct doca_comm_channel_ep_t *ep, struct doca_comm_channel_addr_t **peer_addr,
 	 char *buf, size_t buf_size)
 {
-	uint32_t total_msgs;
-	uint32_t total_msgs_msg;
+	size_t total_chunks;
+	size_t chunk_len;
 	uint32_t i;
-	size_t msg_len;
 	doca_error_t result;
 	struct timespec ts = {
 		.tv_nsec = SLEEP_IN_NANOS,
 	};
 
-	/* Send to the server the number of messages needed for receiving the file */
-	total_msgs = (buf_size + MAX_MSG_SIZE - 1) / MAX_MSG_SIZE;
-	DOCA_DLOG_DBG("total message %d", total_msgs);
-	total_msgs_msg = htonl(total_msgs);
-	while ((result = doca_comm_channel_ep_sendto(ep, &total_msgs_msg, sizeof(uint32_t), DOCA_CC_MSG_FLAG_NONE,
+	/* Send the number of chunks  */
+	total_chunks = (buf_size + MAX_MSG_SIZE - 1) / MAX_MSG_SIZE;
+	DOCA_DLOG_DBG("total chunks %zu", total_chunks);
+	while ((result = doca_comm_channel_ep_sendto(ep, &total_chunks, sizeof(uint32_t), DOCA_CC_MSG_FLAG_NONE,
 						     *peer_addr)) == DOCA_ERROR_AGAIN)
 		nanosleep(&ts, &ts);
 	CHECK_ERR("Message was not sent: %s", doca_get_error_string(result))
 
 
 	/* Send file to the server */
-	for (i = 0; i < total_msgs; i++) {
-		msg_len = MIN(buf_size, MAX_MSG_SIZE);
-		while ((result = doca_comm_channel_ep_sendto(ep, buf, msg_len, DOCA_CC_MSG_FLAG_NONE, *peer_addr)) == DOCA_ERROR_AGAIN)
+	for (i = 0; i < total_chunks; i++) {
+		chunk_len = MIN(buf_size, MAX_MSG_SIZE);
+		while ((result = doca_comm_channel_ep_sendto(ep, buf, chunk_len, DOCA_CC_MSG_FLAG_NONE, *peer_addr)) == DOCA_ERROR_AGAIN)
 			nanosleep(&ts, &ts);
 		CHECK_ERR("Message was not sent: %s", doca_get_error_string(result))
-		buf += msg_len;
-		buf_size -= msg_len;
+		buf += chunk_len;
+		buf_size -= chunk_len;
 	}
+
+	/* Wait for ACK message */
+	char ack[1];
+	size_t ack_len = 1;
+	while((result = doca_comm_channel_ep_recvfrom(ep, ack, &ack_len, DOCA_CC_MSG_FLAG_NONE,
+							peer_addr) == DOCA_ERROR_AGAIN))
+		nanosleep(&ts, &ts);
+	CHECK_ERR("ACK not received")
+
 	return DOCA_SUCCESS;
 }
 
 
+/*
+ * Receive file data with comm channel from a remote peer
+ *
+ * @ep [in]: handle for comm channel local endpoint
+ * @peer_addr [in]: destination address handle of the send operation
+ * @buf [out]: pointer to received file data. Buffer is allocated in this function
+ * @buf_size [out]: file size
+ * @return: DOCA_SUCCESS on success and DOCA_ERROR otherwise
+ */
 static doca_error_t
-compression_experiment_on_host(struct program_core_objects *state, char* received_file, size_t received_file_size, uint8_t **compressed_file, size_t *compressed_file_len)
+recv_data(struct doca_comm_channel_ep_t *ep, 
+		struct doca_comm_channel_addr_t **peer_addr,
+		char **buf,
+		size_t *buf_size,
+		struct file_compression_config *app_cfg)
 {
-	struct timeval start_time, now;
-	double sec, micro, passed;
-	uint64_t checksum;
 	doca_error_t result;
-	uint8_t *compressed_f;
-	size_t compressed_f_len;
+	uint32_t total_chunks;
+	size_t total_chunks_msg_len;
+	struct timespec ts = {
+		.tv_nsec = SLEEP_IN_NANOS,
+	};
+	int num_of_iterations = (app_cfg->timeout * 1000 * 1000) / (SLEEP_IN_NANOS / 1000);
+	int counter;
+	char *buf_ptr;
+	size_t chunk_len;
 
-	DOCA_DLOG_DBG("[CLIENT] Zlib Compression start");
-	gettimeofday(&start_time, NULL);
-	result = compress_file(state, received_file,received_file_size, DOCA_COMPRESS_DEFLATE_JOB, COMPRESS_DEFLATE_SW, &compressed_f, &compressed_f_len, &checksum);
-	gettimeofday(&now, NULL);
-	sec = (double)(now.tv_sec - start_time.tv_sec);
-	micro = (double)(now.tv_usec - start_time.tv_usec);
-	passed = sec + micro / 1000.0 / 1000.0;
-	DOCA_DLOG_INFO("[CLIENT] Zlib compression time %lf, len=%ld", passed, compressed_f_len);
 
-	DOCA_DLOG_DBG("[CLIENT] Zstd Compression start");
-	gettimeofday(&start_time, NULL);
-	result = compress_file(state, received_file, received_file_size, DOCA_COMPRESS_DEFLATE_JOB, COMPRESS_DEFLATE_ZSTD, &compressed_f, &compressed_f_len, &checksum);
-	gettimeofday(&now, NULL);
-	sec = (double)(now.tv_sec - start_time.tv_sec);
-	micro = (double)(now.tv_usec - start_time.tv_usec);
-	passed = sec + micro / 1000.0 / 1000.0;
-	DOCA_DLOG_DBG("[CLIENT] Zstd Compression time %lf, len=%ld", passed, compressed_f_len);
+	// Receive total number of chunks (total_chunks) from a remote peer
+	counter = 0;
+	char total_chunks_msg[4] = {0};
+	total_chunks_msg_len = MAX_MSG_SIZE;
+	while((result = doca_comm_channel_ep_recvfrom(ep, total_chunks_msg, &total_chunks_msg_len, DOCA_CC_MSG_FLAG_NONE,
+							peer_addr) == DOCA_ERROR_AGAIN)) {
+		total_chunks_msg_len = MAX_MSG_SIZE;
+		nanosleep(&ts, &ts);
+		if ((counter++) == num_of_iterations) {
+			DOCA_DLOG_ERR("total_chunks message was not received at the given timeout");
+			return result;
+		}
+	}
+	CHECK_ERR("total_chunks message was not received: %s", doca_get_error_string(result))
+	if (total_chunks_msg_len != sizeof(uint32_t)) {
+			DOCA_DLOG_ERR("Received wrong message size, required %ld, got %ld", sizeof(uint32_t), total_chunks_msg_len);
+			return DOCA_ERROR_UNEXPECTED;
+	}
 
-	*compressed_file = compressed_f;
-	*compressed_file_len = compressed_f_len;
+	// Allocate buffer for receiving data
+	total_chunks = *(uint32_t *)total_chunks_msg;
+	DOCA_DLOG_DBG("total_chunks=%"PRIx32"", total_chunks);
+	DOCA_DLOG_DBG("total_chunks_msg_len=%ld", total_chunks_msg_len);
 
-	return result;
+	*buf_size = MIN(total_chunks * MAX_MSG_SIZE, MAX_FILE_SIZE);
+	
+	*buf = (char *)calloc(1, *buf_size);
+	if (buf == NULL) {
+		DOCA_DLOG_ERR("Failed to allocate memory");
+		return DOCA_ERROR_NO_MEMORY;
+	}
+
+	
+	// Receive data (buf) from a remote peer
+	buf_ptr = *buf;
+	char chunk[MAX_MSG_SIZE] = {0};
+	for(uint32_t i=0; i < total_chunks; i++) {
+		memset(chunk, 0, sizeof(chunk));
+		counter = 0;
+		chunk_len = MAX_MSG_SIZE;
+		while((result = doca_comm_channel_ep_recvfrom(ep, chunk, &chunk_len, DOCA_CC_MSG_FLAG_NONE,
+							peer_addr) == DOCA_ERROR_AGAIN)) {
+			chunk_len = MAX_MSG_SIZE;
+			nanosleep(&ts, &ts);
+			counter++;
+			if (counter == num_of_iterations) {
+				DOCA_DLOG_ERR("Message was not received at the given timeout");
+				return result;
+			}
+		}
+		CHECK_ERR("Message was not received: %s", doca_get_error_string(result))
+
+		if (buf_ptr - *buf + MAX_MSG_SIZE > MAX_FILE_SIZE) {
+			DOCA_DLOG_ERR("Received file exceeded maximum file size");
+			return DOCA_ERROR_UNEXPECTED;
+		}
+		memcpy(buf_ptr, chunk, chunk_len);
+		buf_ptr += chunk_len;
+	}
+
+	/* Send ACK message */
+	char ack[1] = "A";
+	while ((result = doca_comm_channel_ep_sendto(ep, ack, 1, DOCA_CC_MSG_FLAG_NONE, *peer_addr)) == DOCA_ERROR_AGAIN)
+			nanosleep(&ts, &ts);
+	CHECK_ERR("Message was not sent: %s", doca_get_error_string(result))
+
+	return DOCA_SUCCESS;
 }
 
 
 /*
  * This function measures the compression time from data retrieval from DPU memory to completion of compression.
  * - HW deflate
- * - Zlib
- * - Zstd
- * 
 */
 static doca_error_t
 compression_experiment_on_bluefield(struct program_core_objects *state, char* received_file, size_t received_file_size, uint8_t **compressed_file, size_t *compressed_file_len)
 {
-	struct timeval start_time, now;
-	double sec, micro, passed;
 	uint64_t checksum;
 	doca_error_t result;
 	uint8_t *compressed_f;
 	size_t compressed_f_len;
 
-	DOCA_DLOG_DBG("[SERVER] HW Compression start");
-	gettimeofday(&start_time, NULL);
 	result = compress_file(state, received_file, received_file_size, DOCA_COMPRESS_DEFLATE_JOB, COMPRESS_DEFLATE_HW, &compressed_f, &compressed_f_len, &checksum);
-	gettimeofday(&now, NULL);
-	sec = (double)(now.tv_sec - start_time.tv_sec);
-	micro = (double)(now.tv_usec - start_time.tv_usec);
-	passed = sec + micro / 1000.0 / 1000.0;
-	DOCA_DLOG_INFO("[SERVER] HW compression time %lf, len=%ld", passed, compressed_f_len);
-
-	DOCA_DLOG_DBG("[SERVER] Zlib Compression start");
-	gettimeofday(&start_time, NULL);
-	result = compress_file(state, received_file,received_file_size, DOCA_COMPRESS_DEFLATE_JOB, COMPRESS_DEFLATE_SW, &compressed_f, &compressed_f_len, &checksum);
-	gettimeofday(&now, NULL);
-	sec = (double)(now.tv_sec - start_time.tv_sec);
-	micro = (double)(now.tv_usec - start_time.tv_usec);
-	passed = sec + micro / 1000.0 / 1000.0;
-	DOCA_DLOG_INFO("[SERVER] Zlib compression time %lf, len=%ld", passed, compressed_f_len);
-
-	DOCA_DLOG_DBG("[SERVER] Zstd Compression start");
-	gettimeofday(&start_time, NULL);
-	result = compress_file(state, received_file, received_file_size, DOCA_COMPRESS_DEFLATE_JOB, COMPRESS_DEFLATE_ZSTD, &compressed_f, &compressed_f_len, &checksum);
-	gettimeofday(&now, NULL);
-	sec = (double)(now.tv_sec - start_time.tv_sec);
-	micro = (double)(now.tv_usec - start_time.tv_usec);
-	passed = sec + micro / 1000.0 / 1000.0;
-	DOCA_DLOG_INFO("[SERVER] Zstd Compression time %lf, len=%ld", passed, compressed_f_len);
 
 	*compressed_file = compressed_f;
 	*compressed_file_len = compressed_f_len;
@@ -523,19 +525,11 @@ doca_error_t
 file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_channel_addr_t **peer_addr,
 		      struct file_compression_config *app_cfg, struct program_core_objects *state)
 {
-	char *file_data;
-	char received_msg[MAX_MSG_SIZE] = {0};
-	uint32_t i, total_msgs;
-	char msg[MAX_MSG_SIZE] = {0};
-	size_t msg_len;
-	struct stat statbuf;
-	char *received_file = NULL;
-	char *received_ptr;
 	int fd;
+	struct stat statbuf;
+	char *file_data;
 	doca_error_t result;
-	struct timespec ts = {
-		.tv_nsec = SLEEP_IN_NANOS,
-	};
+
 
 	fd = open(app_cfg->file_path, O_RDWR);
 	if (fd < 0) {
@@ -561,222 +555,70 @@ file_compression_client(struct doca_comm_channel_ep_t *ep, struct doca_comm_chan
 		close(fd);
 		return DOCA_ERROR_NO_MEMORY;
 	}
+	DOCA_DLOG_INFO("File size: %ld", statbuf.st_size);
 	close(fd);
 
-	DOCA_DLOG_INFO("File size: %ld", statbuf.st_size);
+	// step1. timer start
+	struct timeval start_time, cur_time;
+	double sec, micro, tat;
+	gettimeofday(&start_time, NULL);
+	// 2. send file data len & file data
+	result = send_data(ep, peer_addr, file_data, statbuf.st_size);
+	CHECK_ERR("Failed to send data")
+	// 3. invoke recv function to wait for compressed data.
+	char *recv_buf;
+	size_t recv_buf_len;
+	result = recv_data(ep, peer_addr, &recv_buf, &recv_buf_len, app_cfg);
+	CHECK_ERR("Failed to receive data")
 
-	/* Send the file content to the server(DPU) */
-	result = send_file(ep, peer_addr, (char *)file_data, statbuf.st_size);
-	CHECK_ERR("Could not send file")
-	DOCA_DLOG_DBG("send_file finished");
+	// 4. timer stop
+	gettimeofday(&cur_time, NULL);
+	sec = (double)(cur_time.tv_sec - start_time.tv_sec);
+	micro = (double)(cur_time.tv_usec - start_time.tv_usec);
+	tat = sec + micro / 1000.0 / 1000.0;
+	DOCA_DLOG_DBG("[CLIENT] BF2 Deflate TAT time %lf (%ld->%ld)", tat, statbuf.st_size, recv_buf_len);
 
-	/* Receive finish message when file was completely read by the server(DPU) */
-	msg_len = MAX_MSG_SIZE;
-	while ((result = doca_comm_channel_ep_recvfrom(ep, msg, &msg_len, DOCA_CC_MSG_FLAG_NONE, peer_addr)) ==
-	       DOCA_ERROR_AGAIN) {
-		nanosleep(&ts, &ts);
-		msg_len = MAX_MSG_SIZE;
-	}
-	CHECK_ERR("Finish message was not received: %s", doca_get_error_string(result))
-	msg[MAX_MSG_SIZE - 1] = '\0';
-	DOCA_DLOG_INFO("%s", msg);
-
-	/* Receive number of total msgs from the server(DPU) */
-	msg_len = MAX_MSG_SIZE;
-	while ((result = doca_comm_channel_ep_recvfrom(ep, received_msg, &msg_len, DOCA_CC_MSG_FLAG_NONE, peer_addr)) == DOCA_ERROR_AGAIN) {
-		msg_len = MAX_MSG_SIZE;
-	}
-	if (result != DOCA_SUCCESS) {
-			DOCA_DLOG_ERR("Message was not received: %s", doca_get_error_string(result));
-			goto finish_msg;
-	}
-	if (msg_len != sizeof(uint32_t)) {
-			DOCA_DLOG_ERR("Received wrong message size, required %ld, got %ld", sizeof(uint32_t), msg_len);
-			goto finish_msg;
-	}
-	total_msgs = ntohl(*(uint32_t *)received_msg);
-
-	received_file = calloc(1, MAX_FILE_SIZE);
-	if (received_file == NULL) {
-		DOCA_DLOG_ERR("Failed to allocate memory");
-		result = DOCA_ERROR_NO_MEMORY;
-		goto finish_msg;
-	}
-	received_ptr = received_file;
-
-	/* Receive file from the server(DPU) */
-	DOCA_DLOG_DBG("[CLIENT] Receiving file from the server total: %d msgs", total_msgs);
-	for (i = 0; i < total_msgs; i++) {
-		memset(received_msg, 0, sizeof(received_msg));
-		msg_len = MAX_MSG_SIZE;
-		while ((result = doca_comm_channel_ep_recvfrom(ep, received_msg, &msg_len, DOCA_CC_MSG_FLAG_NONE, peer_addr)) == DOCA_ERROR_AGAIN)
-		{
-			msg_len = MAX_MSG_SIZE;
-			nanosleep(&ts, &ts);
-		}
-		CHECK_ERR("Message was not received: %s", doca_get_error_string(result))
-
-		// DOCA_DLOG_DBG("Received message #%d / %d", i, total_msgs);
-		if (received_ptr - received_file + msg_len > MAX_FILE_SIZE) {
-			DOCA_DLOG_ERR("Received file exceeded maximum file size");
-			goto finish_msg;
-		}
-		memcpy(received_ptr, received_msg, msg_len);
-		received_ptr += msg_len;
-	}
-
-	/* Send Ack msg */
-	char ack_msg[] = "ACK";
-	while((result = doca_comm_channel_ep_sendto(ep, ack_msg, sizeof(ack_msg), DOCA_CC_MSG_FLAG_NONE, *peer_addr)) == DOCA_ERROR_AGAIN)
-		nanosleep(&ts, &ts);
-	CHECK_ERR("Failed to send ACK: %s", doca_get_error_string(result))
-
-
-	/* Write compressed data to a file */
-	DOCA_DLOG_DBG("[CLIENT] file to write-> %s", app_cfg->out_file_path);
-	FILE* out_file = fopen(app_cfg->out_file_path, "w");
-	if (out_file == NULL) {
-		DOCA_DLOG_ERR("Failed to open %s", app_cfg->out_file_path);
-		return DOCA_ERROR_IO_FAILED;
-	}
-
-	int num;
-	num = fwrite(received_file, 1, (size_t)(received_ptr - received_file), out_file);
-    if(num < 0) {
-		DOCA_DLOG_ERR("Failed to write to %s", app_cfg->out_file_path);
-		close(fd);
-		return DOCA_ERROR_IO_FAILED;
-    }
-
-	if (fclose(out_file) == EOF) {
-		DOCA_DLOG_ERR("Failed to close file %s", app_cfg->out_file_path);
-		return DOCA_ERROR_IO_FAILED;
-	}
-
-	/* Start compression experiment on host machine */
-	uint8_t *compressed_file;
-	size_t compressed_file_len;
-	compression_experiment_on_host(state, file_data, statbuf.st_size, &compressed_file, &compressed_file_len);
-
-	/* Start compression experiment using host machine and bf2 */
-
-
-finish_msg:
 	DOCA_DLOG_DBG("[CLIENT] Finish Client");
-	return result;
+	return DOCA_SUCCESS;
 }
 
-// 1. receive plain data from HOST (file_compression_client)
-// 2. compress plain data on DPU
-// 3. send compressed data to HOST (file_compression_client)
 doca_error_t
 file_compression_server(struct doca_comm_channel_ep_t *ep, struct doca_comm_channel_addr_t **peer_addr,
 		struct file_compression_config *app_cfg, struct program_core_objects *state)
 {
-	char received_msg[MAX_MSG_SIZE] = {0};
-	uint32_t i, total_msgs;
-	size_t msg_len;
-	char ack_msg[] = "ACK: Server was done receiving messages";
-	char *received_file = NULL;
-	char *received_ptr;
-	int counter;
-	int num_of_iterations = (app_cfg->timeout * 1000 * 1000) / (SLEEP_IN_NANOS / 1000);
-	struct timespec ts = {
-		.tv_nsec = SLEEP_IN_NANOS,
-	};
 	doca_error_t result;
+	char *recv_buf;
+	size_t recv_buf_len;
+	char *send_buf;
+	size_t send_buf_len;
 
+	DOCA_DLOG_INFO("[SERVER] Waiting for data to compress");
+	// step1. invoke recv function and wait for file data len & file data
+	result = recv_data(ep, peer_addr, &recv_buf, &recv_buf_len, app_cfg);
+	CHECK_ERR("[SERVER] recv_data failed")
 
-	/* receive number of total msgs from the client */
-	msg_len = MAX_MSG_SIZE;
-	counter = 0;
-	while ((result = doca_comm_channel_ep_recvfrom(ep, received_msg, &msg_len, DOCA_CC_MSG_FLAG_NONE,
-						       peer_addr)) == DOCA_ERROR_AGAIN) {
-		msg_len = MAX_MSG_SIZE;
-		nanosleep(&ts, &ts);
-		counter++;
-		if (counter == num_of_iterations) {
-			DOCA_DLOG_ERR("Message was not received at the given timeout");
-			goto finish_msg;
-		}
-	}
-	CHECK_ERR("Message was not received: %s", doca_get_error_string(result))
-	if (msg_len != sizeof(uint32_t)) {
-		DOCA_DLOG_ERR("Received wrong message size, required %ld, got %ld", sizeof(uint32_t), msg_len);
-		goto finish_msg;
-	}
-	total_msgs = ntohl(*(uint32_t *)received_msg);
+	// 2. compress file data by HW deflate
+	result = compression_experiment_on_bluefield(state, recv_buf, recv_buf_len, (uint8_t **)&send_buf, &send_buf_len);
+	CHECK_ERR("[SERVER] Failed to compress data")
 
-	received_file = calloc(1, MAX_FILE_SIZE);
-	if (received_file == NULL) {
-		DOCA_DLOG_ERR("Failed to allocate memory");
-		result = DOCA_ERROR_NO_MEMORY;
-		goto finish_msg;
-	}
-	received_ptr = received_file;
+	// 3. send compressed data to client
+	result = send_data(ep, peer_addr, send_buf, send_buf_len);
 
-	/* Receive file from the client(HOST) */
-	DOCA_DLOG_DBG("[SERVER] Start receiving file from the client total: %d msgs", total_msgs);
-	for (i = 0; i < total_msgs; i++) {
-		memset(received_msg, 0, sizeof(received_msg));
-		msg_len = MAX_MSG_SIZE;
-		counter = 0;
-		while ((result = doca_comm_channel_ep_recvfrom(ep, received_msg, &msg_len, DOCA_CC_MSG_FLAG_NONE,
-							       peer_addr)) == DOCA_ERROR_AGAIN) {
-			// DOCA_DLOG_DBG("[SERVER] recv message %ld bytes", msg_len);
-			msg_len = MAX_MSG_SIZE;
-			nanosleep(&ts, &ts);
-			counter++;
-			if (counter == num_of_iterations) {
-				DOCA_DLOG_ERR("Message was not received at the given timeout");
-				goto finish_msg;
-			}
-		}
-		CHECK_ERR("Message was not received: %s", doca_get_error_string(result))
-
-		if (received_ptr - received_file + msg_len > MAX_FILE_SIZE) {
-			DOCA_DLOG_ERR("Received file exceeded maximum file size");
-			goto finish_msg;
-		}
-		memcpy(received_ptr, received_msg, msg_len);
-		received_ptr += msg_len;
-	}
-
-	/* Notification of the completion of file reception */
-	while((result = doca_comm_channel_ep_sendto(ep, ack_msg, sizeof(ack_msg), DOCA_CC_MSG_FLAG_NONE, *peer_addr)) == DOCA_ERROR_AGAIN)
-		nanosleep(&ts, &ts);
-	CHECK_ERR("Failed to receive file data from client: %s", doca_get_error_string(result))
-
-	/* Compress received_file  */
-	uint8_t *compressed_file;
-	size_t compressed_file_len;
-	result = compression_experiment_on_bluefield(state, received_file, (size_t)(received_ptr-received_file), &compressed_file, &compressed_file_len);
-	CHECK_ERR("Failed to compress data: %s", doca_get_error_string(result))
-	DOCA_DLOG_DBG("[SERVER] Compression done");
-
-
-	/* Send file */
-	DOCA_DLOG_DBG("[SERVER] Send file to client");
-	result = send_file(ep, peer_addr, (char *)compressed_file, compressed_file_len);
-	CHECK_ERR("Failed to receive file data from client: %s", doca_get_error_string(result))
-
-	/* Receive Ack msg */
-	char msg[MAX_MSG_SIZE] = {0};
-	while ((result = doca_comm_channel_ep_recvfrom(ep, msg, &msg_len, DOCA_CC_MSG_FLAG_NONE, peer_addr)) ==
-	       DOCA_ERROR_AGAIN) {
-		nanosleep(&ts, &ts);
-		msg_len = MAX_MSG_SIZE;
-	}
-	CHECK_ERR("Finish message was not received: %s", doca_get_error_string(result))
-
-	msg[MAX_MSG_SIZE - 1] = '\0';
-	DOCA_DLOG_DBG("%s", msg);
-	
-
-finish_msg:
-	DOCA_DLOG_INFO("Finish Server...");
+	DOCA_DLOG_INFO("[SERVER] Finish Server...");
 	return result;
 }
+
+
+
+
+/* 
+ * =============================================================
+ * The following sections contain argument parser functions 
+ * and functions that perform initialization of the communication channel.
+ * 
+ * !!Not related to client-server communication.
+ * =============================================================
+*/
 
 /**
  * Check if given device is capable of executing a DOCA_COMPRESS_DEFLATE_JOB.
@@ -866,11 +708,9 @@ file_compression_init(struct doca_comm_channel_ep_t **ep, struct doca_comm_chann
 	}
 
 	/* open device for compress job */
-	// NOTE: disable compression device check
 	if (app_cfg->mode == SERVER) {
 		// ==== server code =====
 		result = open_doca_device_with_capabilities(&compress_jobs_decompress_is_supported, &state->dev);
-
 		if (result != DOCA_SUCCESS) {
 			DOCA_DLOG_ERR("Failed to open DOCA device for DOCA Compress: %s", doca_get_error_string(result));
 			goto rep_dev_close;

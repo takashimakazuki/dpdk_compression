@@ -51,3 +51,20 @@ executable('doca_comm_compression',
 	dependencies : app_dependencies,
 	include_directories : app_inc_dirs,
 	install: true)
+
+
+app_compression_total_srcs = [
+	'file_compression_total_main.c',
+	'file_compression_total_core.c',
+	common_dir_path + '/pack.c',
+	common_dir_path + '/utils.c',
+	common_dir_path + '/doca_utils.c',
+	samples_dir_path + '/common.c',
+]
+
+executable('doca_comm_compression_total',
+	app_compression_total_srcs,
+	c_args : base_c_args,
+	dependencies : app_dependencies,
+	include_directories : app_inc_dirs,
+	install: true)
