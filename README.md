@@ -25,7 +25,7 @@
 |HW deflate (BF)|	0.128s, 82.2MB, 86%	|0.060s, 8.7MB, 25%	|DPUmem→HWacc→DPUmem|
 |Zstd(HOST)	|0.210s, 82.5MB, 86%	|0.110s, 6.4MB, 18%	|HOSTmem→CompressLib→HOSTmem|
 |HW deflate(BF) TAT|	0.330s, 82.2MB, 86%	|0.115s, 8.7MB, 25%	|HOSTmem→DPUmem→HWacc→DPUmem→HOSTmem|
-C|opy&Back TAT|	0.190s	|0.051s	|HOSTmem→DPUmem→HOSTmem|
+|Copy&Back TAT|	0.190s	|0.051s	|HOSTmem→DPUmem→HOSTmem|
 
 
 ```
